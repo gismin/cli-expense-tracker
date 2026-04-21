@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Data (exclude from repo — personal finance data)
+expenses.json
+
+# OS
+.DS_Store
+Thumbs.db
