@@ -5,9 +5,12 @@ A beginner Python project — a command-line expense tracker that reads and writ
 ## Features
 
 - **Add** expenses with amount, category, and optional description
+- **Edit** any field on an existing expense by ID (use `-` to keep a field unchanged)
 - **List** all expenses or filter by category
 - **Delete** expenses by ID
 - **Summarize** spending grouped by category (all-time or by month)
+- **Export** to CSV — opens directly in Excel and Google Sheets
+- Color-coded amounts: green (< 50k) · yellow (< 200k) · red (≥ 200k)
 - Stores data locally in `expenses.json`
 - Handles all errors gracefully with `try/except`
 
@@ -17,6 +20,10 @@ A beginner Python project — a command-line expense tracker that reads and writ
 # Add an expense
 python expense_tracker.py add 25000 Food "Nasi goreng"
 python expense_tracker.py add 150000 Transport "Grab to office"
+
+# Edit an expense — use '-' to keep a field unchanged
+python expense_tracker.py edit 2 35000 - "Updated description"   # change amount + desc
+python expense_tracker.py edit 2 - Coffee                        # change only category
 
 # List all expenses
 python expense_tracker.py list
@@ -29,6 +36,10 @@ python expense_tracker.py summary
 
 # Summary for a specific month
 python expense_tracker.py summary month 2026-04
+
+# Export to CSV (default: expenses.csv)
+python expense_tracker.py export
+python expense_tracker.py export april.csv
 
 # Delete an expense by ID
 python expense_tracker.py delete 3
@@ -85,7 +96,9 @@ CLI Expense Tracker/
 ## What I Learned
 
 - Reading and writing JSON files with `json.load` / `json.dump`
+- Writing CSV files with the `csv` module (`utf-8-sig` BOM for Excel compatibility)
 - Error handling with `try/except` for file I/O and user input
 - Parsing command-line arguments from `sys.argv`
-- Organizing code into focused functions
+- ANSI escape codes for terminal colors (with graceful fallback on unsupported terminals)
+- Organizing code into focused functions with a dispatch dict instead of `if/elif`
 - Using `.gitignore` to protect personal data
