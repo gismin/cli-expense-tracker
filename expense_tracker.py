@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""CLI Expense Tracker — add, list, edit, delete, summarize, and export expenses."""
+"""CLI Expense Tracker — add, list, search, edit, delete, summarize, and export expenses."""
 
+import argparse
 import csv
 import json
 import os
@@ -13,16 +14,14 @@ DATA_FILE = os.path.join(os.path.dirname(__file__), "expenses.json")
 # ── Color helpers ─────────────────────────────────────────────────────────────
 
 def _supports_color() -> bool:
-    """True when the terminal can render ANSI escape codes."""
     if os.environ.get("NO_COLOR"):
         return False
     if sys.platform == "win32":
-        # Windows 10 1511+ supports ANSI in ConHost/WT; check via TERM or WT_SESSION
         return bool(os.environ.get("WT_SESSION") or os.environ.get("TERM"))
     return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
-_USE_COLOR = None  # resolved once at first call
+_USE_COLOR: bool | None = None
 
 
 def _color(text: str, code: str) -> str:
@@ -34,16 +33,16 @@ def _color(text: str, code: str) -> str:
     return f"\033[{code}m{text}\033[0m"
 
 
-def bold(text: str) -> str:       return _color(text, "1")
-def green(text: str) -> str:      return _color(text, "32")
-def yellow(text: str) -> str:     return _color(text, "33")
-def red(text: str) -> str:        return _color(text, "31")
-def cyan(text: str) -> str:       return _color(text, "36")
-def dim(text: str) -> str:        return _color(text, "2")
+def bold(text: str) -> str:   return _color(text, "1")
+def green(text: str) -> str:  return _color(text, "32")
+def yellow(text: str) -> str: return _color(text, "33")
+def red(text: str) -> str:    return _color(text, "31")
+def cyan(text: str) -> str:   return _color(text, "36")
+def dim(text: str) -> str:    return _color(text, "2")
 
 
 def amount_color(amount: float, text: str) -> str:
-    """Color an amount string: green < 50k, yellow < 200k, red >= 200k."""
+    """Color an amount: green < 50k, yellow < 200k, red >= 200k."""
     if amount >= 200_000:
         return red(text)
     if amount >= 50_000:
@@ -83,112 +82,8 @@ def next_id(expenses: list[dict]) -> int:
     return max((e["id"] for e in expenses), default=0) + 1
 
 
-# ── Commands ──────────────────────────────────────────────────────────────────
-
-def cmd_add(args: list[str]) -> None:
-    """add <amount> <category> [description]"""
-    if len(args) < 2:
-        print(f"Usage: add <amount> <category> [description]")
-        print(f"  e.g. add 12.50 Food 'Lunch at warung'")
-        return
-
-    try:
-        amount = float(args[0])
-        if amount <= 0:
-            raise ValueError("Amount must be positive")
-    except ValueError as e:
-        print(red(f"Error: invalid amount — {e}"))
-        return
-
-    category = args[1].capitalize()
-    description = " ".join(args[2:]) if len(args) > 2 else ""
-
-    expenses = load_expenses()
-    entry = {
-        "id": next_id(expenses),
-        "date": str(date.today()),
-        "amount": round(amount, 2),
-        "category": category,
-        "description": description,
-    }
-    expenses.append(entry)
-    save_expenses(expenses)
-
-    amt_str = amount_color(entry["amount"], f"Rp {entry['amount']:>10.2f}")
-    print(f"{green('Added')}  #{entry['id']:>3}  {entry['date']}  {cyan(entry['category']):<23}  {amt_str}  {dim(description)}")
-
-
-def cmd_edit(args: list[str]) -> None:
-    """edit <id> [amount] [category] [description]
-
-    Fields to update are positional. Use '-' to keep a field unchanged.
-      edit 2 35000 - "Updated description"
-      edit 2 - Coffee
-      edit 2 35000 Coffee "New description"
-    """
-    if len(args) < 2:
-        print("Usage: edit <id> [amount|-] [category|-] [description|-]")
-        print("  Use '-' to keep a field unchanged.")
-        print("  e.g. edit 2 35000 - 'Fixed amount'")
-        return
-
-    try:
-        target_id = int(args[0])
-    except ValueError:
-        print(red(f"Error: '{args[0]}' is not a valid ID"))
-        return
-
-    expenses = load_expenses()
-    target = next((e for e in expenses if e["id"] == target_id), None)
-    if target is None:
-        print(red(f"No expense found with ID {target_id}"))
-        return
-
-    # Parse each optional field; '-' means keep existing value
-    new_amount = target["amount"]
-    new_category = target["category"]
-    new_description = target["description"]
-
-    if len(args) > 1 and args[1] != "-":
-        try:
-            new_amount = float(args[1])
-            if new_amount <= 0:
-                raise ValueError("Amount must be positive")
-            new_amount = round(new_amount, 2)
-        except ValueError as e:
-            print(red(f"Error: invalid amount — {e}"))
-            return
-
-    if len(args) > 2 and args[2] != "-":
-        new_category = args[2].capitalize()
-
-    if len(args) > 3 and args[3] != "-":
-        new_description = " ".join(args[3:])
-
-    target["amount"] = new_amount
-    target["category"] = new_category
-    target["description"] = new_description
-
-    save_expenses(expenses)
-    amt_str = amount_color(new_amount, f"Rp {new_amount:>10.2f}")
-    print(f"{yellow('Updated')}  #{target_id:>3}  {target['date']}  {cyan(new_category):<23}  {amt_str}  {dim(new_description)}")
-
-
-def cmd_list(args: list[str]) -> None:
-    """list [category]"""
-    expenses = load_expenses()
-    if not expenses:
-        print(dim("No expenses recorded yet."))
-        return
-
-    if args:
-        category = args[0].capitalize()
-        expenses = [e for e in expenses if e["category"] == category]
-        if not expenses:
-            print(dim(f"No expenses in category '{category}'."))
-            return
-
-    sep = "─" * 64
+def _print_table(expenses: list[dict]) -> None:
+    sep = "─" * 68
     header = f"{'ID':>4}  {'Date':<12}  {'Category':<14}  {'Amount':>12}  Description"
     print(bold(header))
     print(dim(sep))
@@ -201,47 +96,110 @@ def cmd_list(args: list[str]) -> None:
     print(f"{bold('Total'):>38}  {total_str}")
 
 
-def cmd_delete(args: list[str]) -> None:
-    """delete <id>"""
-    if not args:
-        print("Usage: delete <id>")
-        return
+# ── Commands ──────────────────────────────────────────────────────────────────
 
-    try:
-        target_id = int(args[0])
-    except ValueError:
-        print(red(f"Error: '{args[0]}' is not a valid ID"))
-        return
+def cmd_add(args: argparse.Namespace) -> None:
+    if args.amount <= 0:
+        print(red("Error: amount must be positive"))
+        sys.exit(1)
 
     expenses = load_expenses()
-    original_len = len(expenses)
-    expenses = [e for e in expenses if e["id"] != target_id]
+    entry = {
+        "id": next_id(expenses),
+        "date": str(date.today()),
+        "amount": round(args.amount, 2),
+        "category": args.category.capitalize(),
+        "description": args.description or "",
+    }
+    expenses.append(entry)
+    save_expenses(expenses)
 
-    if len(expenses) == original_len:
-        print(red(f"No expense found with ID {target_id}"))
-        return
+    amt_str = amount_color(entry["amount"], f"Rp {entry['amount']:>10.2f}")
+    print(f"{green('Added')}  #{entry['id']:>3}  {entry['date']}  {cyan(entry['category']):<23}  {amt_str}  {dim(entry['description'])}")
+
+
+def cmd_edit(args: argparse.Namespace) -> None:
+    expenses = load_expenses()
+    target = next((e for e in expenses if e["id"] == args.id), None)
+    if target is None:
+        print(red(f"No expense found with ID {args.id}"))
+        sys.exit(1)
+
+    if args.amount is not None:
+        if args.amount <= 0:
+            print(red("Error: amount must be positive"))
+            sys.exit(1)
+        target["amount"] = round(args.amount, 2)
+    if args.category is not None:
+        target["category"] = args.category.capitalize()
+    if args.description is not None:
+        target["description"] = args.description
 
     save_expenses(expenses)
-    print(red(f"Deleted") + f" expense #{target_id}")
+    amt_str = amount_color(target["amount"], f"Rp {target['amount']:>10.2f}")
+    print(f"{yellow('Updated')}  #{target['id']:>3}  {target['date']}  {cyan(target['category']):<23}  {amt_str}  {dim(target['description'])}")
 
 
-def cmd_summary(args: list[str]) -> None:
-    """summary [month YYYY-MM]"""
+def cmd_list(args: argparse.Namespace) -> None:
     expenses = load_expenses()
     if not expenses:
         print(dim("No expenses recorded yet."))
         return
 
-    if args and args[0] == "month":
-        if len(args) < 2:
-            print("Usage: summary month YYYY-MM")
-            return
-        month = args[1]
-        expenses = [e for e in expenses if e["date"].startswith(month)]
+    if args.category:
+        expenses = [e for e in expenses if e["category"] == args.category.capitalize()]
         if not expenses:
-            print(dim(f"No expenses in {month}."))
+            print(dim(f"No expenses in category '{args.category}'."))
             return
-        print(f"\n{bold(f'Summary for {month}')}")
+
+    if args.month:
+        expenses = [e for e in expenses if e["date"].startswith(args.month)]
+        if not expenses:
+            print(dim(f"No expenses in {args.month}."))
+            return
+
+    _print_table(expenses)
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    expenses = load_expenses()
+    keyword = args.keyword.lower()
+    matches = [
+        e for e in expenses
+        if keyword in e.get("description", "").lower()
+        or keyword in e["category"].lower()
+    ]
+    if not matches:
+        print(dim(f"No expenses matching '{args.keyword}'."))
+        return
+    _print_table(matches)
+
+
+def cmd_delete(args: argparse.Namespace) -> None:
+    expenses = load_expenses()
+    original_len = len(expenses)
+    expenses = [e for e in expenses if e["id"] != args.id]
+
+    if len(expenses) == original_len:
+        print(red(f"No expense found with ID {args.id}"))
+        sys.exit(1)
+
+    save_expenses(expenses)
+    print(red("Deleted") + f" expense #{args.id}")
+
+
+def cmd_summary(args: argparse.Namespace) -> None:
+    expenses = load_expenses()
+    if not expenses:
+        print(dim("No expenses recorded yet."))
+        return
+
+    if args.month:
+        expenses = [e for e in expenses if e["date"].startswith(args.month)]
+        if not expenses:
+            print(dim(f"No expenses in {args.month}."))
+            return
+        print(f"\n{bold(f'Summary for {args.month}')}")
     else:
         print(f"\n{bold('All-time Summary')}")
 
@@ -250,25 +208,23 @@ def cmd_summary(args: list[str]) -> None:
         by_category[e["category"]] = by_category.get(e["category"], 0) + e["amount"]
 
     sep = "─" * 36
-    col_header = f"{'Category':<20}  {'Total':>12}"
-    print(f"\n{bold(col_header)}")
+    print(f"\n{bold('Category'):<20}  {bold('Total'):>12}")
     print(dim(sep))
     for cat, total in sorted(by_category.items(), key=lambda x: -x[1]):
         amt_str = amount_color(total, f"Rp {total:>9.2f}")
         print(f"{cyan(cat):<29}  {amt_str}")
     print(dim(sep))
     grand = sum(by_category.values())
+    count = len(expenses)
+    avg = grand / count if count else 0
     grand_str = amount_color(grand, f"Rp {grand:>9.2f}")
-    print(f"{bold('TOTAL'):<20}  {' ' * 9}{grand_str}\n")
+    avg_str = amount_color(avg, f"Rp {avg:>9.2f}")
+    print(f"{bold('TOTAL'):<20}  {' ' * 9}{grand_str}")
+    print(f"{dim('avg/entry'):<20}  {' ' * 9}{dim(avg_str)}\n")
 
 
-def cmd_export(args: list[str]) -> None:
-    """export [filename.csv]
-
-    Exports all expenses to a CSV file (default: expenses.csv).
-    Opens cleanly in Excel and Google Sheets.
-    """
-    filename = args[0] if args else "expenses.csv"
+def cmd_export(args: argparse.Namespace) -> None:
+    filename = args.filename or "expenses.csv"
     if not filename.endswith(".csv"):
         filename += ".csv"
 
@@ -281,86 +237,133 @@ def cmd_export(args: list[str]) -> None:
 
     try:
         with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
-            # utf-8-sig writes the BOM that Excel needs to detect UTF-8 correctly
             writer = csv.DictWriter(f, fieldnames=["id", "date", "amount", "category", "description"])
             writer.writeheader()
             writer.writerows(expenses)
     except OSError as e:
         print(red(f"Error writing CSV: {e}"))
-        return
+        sys.exit(1)
 
     print(f"{green('Exported')} {len(expenses)} expense(s) → {bold(filename)}")
 
 
-def cmd_help(_: list[str]) -> None:
-    print(f"""
-{bold('CLI Expense Tracker')}
-{'─' * 44}
-  {cyan('add')} <amount> <category> [description]
-      Record a new expense.
+def cmd_import(args: argparse.Namespace) -> None:
+    """Import expenses from a CSV file (must match the export format)."""
+    if not os.path.exists(args.filename):
+        print(red(f"File not found: {args.filename}"))
+        sys.exit(1)
 
-  {cyan('edit')} <id> [amount|-] [category|-] [description|-]
-      Update a field on an existing expense.
-      Use '-' to keep a field unchanged.
+    try:
+        with open(args.filename, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+    except OSError as e:
+        print(red(f"Error reading CSV: {e}"))
+        sys.exit(1)
 
-  {cyan('list')} [category]
-      Show all expenses, or filter by category.
+    if not rows:
+        print(dim("CSV file is empty — nothing to import."))
+        return
 
-  {cyan('delete')} <id>
-      Remove an expense by its ID.
+    expenses = load_expenses()
+    imported = 0
+    skipped = 0
 
-  {cyan('summary')} [month YYYY-MM]
-      Totals grouped by category.
+    for row in rows:
+        try:
+            entry = {
+                "id": next_id(expenses),
+                "date": row["date"],
+                "amount": round(float(row["amount"]), 2),
+                "category": row["category"].capitalize(),
+                "description": row.get("description", ""),
+            }
+        except (KeyError, ValueError) as e:
+            print(yellow(f"Skipping invalid row: {e}"))
+            skipped += 1
+            continue
 
-  {cyan('export')} [filename.csv]
-      Export all expenses to CSV (default: expenses.csv).
+        expenses.append(entry)
+        imported += 1
 
-  {cyan('help')}
-      Show this message.
-
-{bold('Examples:')}
-  python expense_tracker.py add 25000 Food "Nasi goreng"
-  python expense_tracker.py edit 2 35000 - "Fixed amount"
-  python expense_tracker.py list
-  python expense_tracker.py list Food
-  python expense_tracker.py summary month 2026-04
-  python expense_tracker.py export april.csv
-  python expense_tracker.py delete 3
-
-{dim('Amount colors: green < 50k  |  yellow < 200k  |  red >= 200k')}
-""")
+    save_expenses(expenses)
+    print(f"{green('Imported')} {imported} expense(s)" + (f" ({skipped} skipped)" if skipped else ""))
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Argument parser ───────────────────────────────────────────────────────────
 
-COMMANDS = {
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="expense-tracker",
+        description="CLI Expense Tracker — track spending from the terminal.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Amount colors: green < 50k  |  yellow < 200k  |  red >= 200k",
+    )
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
+    sub.required = True
+
+    # add
+    p_add = sub.add_parser("add", help="record a new expense")
+    p_add.add_argument("amount", type=float, help="expense amount (e.g. 25000)")
+    p_add.add_argument("category", help="category label (e.g. Food)")
+    p_add.add_argument("description", nargs="?", default="", help="optional description")
+
+    # edit
+    p_edit = sub.add_parser("edit", help="update an existing expense by ID")
+    p_edit.add_argument("id", type=int, help="expense ID to edit")
+    p_edit.add_argument("--amount", "-a", type=float, help="new amount")
+    p_edit.add_argument("--category", "-c", help="new category")
+    p_edit.add_argument("--description", "-d", help="new description")
+
+    # list
+    p_list = sub.add_parser("list", help="show expenses (optionally filtered)")
+    p_list.add_argument("category", nargs="?", help="filter by category")
+    p_list.add_argument("--month", "-m", metavar="YYYY-MM", help="filter by month")
+
+    # search
+    p_search = sub.add_parser("search", help="search expenses by keyword")
+    p_search.add_argument("keyword", help="keyword to search in description or category")
+
+    # delete
+    p_del = sub.add_parser("delete", help="remove an expense by ID")
+    p_del.add_argument("id", type=int, help="expense ID to delete")
+
+    # summary
+    p_sum = sub.add_parser("summary", help="totals grouped by category")
+    p_sum.add_argument("--month", "-m", metavar="YYYY-MM", help="limit to a specific month")
+
+    # export
+    p_exp = sub.add_parser("export", help="export all expenses to CSV")
+    p_exp.add_argument("filename", nargs="?", help="output filename (default: expenses.csv)")
+
+    # import
+    p_imp = sub.add_parser("import", help="import expenses from a CSV file")
+    p_imp.add_argument("filename", help="CSV file to import")
+
+    return parser
+
+
+HANDLERS = {
     "add": cmd_add,
     "edit": cmd_edit,
     "list": cmd_list,
+    "search": cmd_search,
     "delete": cmd_delete,
     "summary": cmd_summary,
     "export": cmd_export,
-    "help": cmd_help,
+    "import": cmd_import,
 }
 
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    if len(sys.argv) < 2:
-        cmd_help([])
-        return
-
-    command = sys.argv[1].lower()
-    args = sys.argv[2:]
-
-    handler = COMMANDS.get(command)
-    if handler is None:
-        print(red(f"Unknown command '{command}'.") + " Run 'help' to see available commands.")
-        sys.exit(1)
-
-    handler(args)
+    parser = build_parser()
+    args = parser.parse_args()
+    HANDLERS[args.command](args)
 
 
 if __name__ == "__main__":
