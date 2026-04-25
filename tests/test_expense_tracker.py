@@ -166,6 +166,61 @@ def test_list_filter_month(capsys):
     assert "2025-01-15" in capsys.readouterr().out
 
 
+# ── list sort / limit ────────────────────────────────────────────────────────
+
+def test_list_sort_by_amount():
+    _seed(amount=5000, category="Food")
+    _seed(amount=50000, category="Transport")
+    _seed(amount=1000, category="Coffee")
+    expenses_after_sort = []
+    original_print = et._print_table
+
+    def capture(rows):
+        expenses_after_sort.extend(rows)
+    et._print_table = capture
+    try:
+        et.cmd_list(_run("list", "--sort", "amount"))
+    finally:
+        et._print_table = original_print
+
+    amounts = [e["amount"] for e in expenses_after_sort]
+    assert amounts == sorted(amounts, reverse=True)
+
+
+def test_list_sort_by_category():
+    _seed(category="Transport")
+    _seed(category="Food")
+    _seed(category="Coffee")
+    captured = []
+
+    def capture(rows):
+        captured.extend(rows)
+    et._print_table, orig = capture, et._print_table
+    try:
+        et.cmd_list(_run("list", "--sort", "category"))
+    finally:
+        et._print_table = orig
+
+    cats = [e["category"] for e in captured]
+    assert cats == sorted(cats)
+
+
+def test_list_limit():
+    for i in range(5):
+        _seed(amount=(i + 1) * 1000)
+    captured = []
+
+    def capture(rows):
+        captured.extend(rows)
+    et._print_table, orig = capture, et._print_table
+    try:
+        et.cmd_list(_run("list", "--limit", "3"))
+    finally:
+        et._print_table = orig
+
+    assert len(captured) == 3
+
+
 # ── search ────────────────────────────────────────────────────────────────────
 
 def test_search_by_description(capsys):

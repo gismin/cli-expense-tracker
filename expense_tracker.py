@@ -158,6 +158,13 @@ def cmd_list(args: argparse.Namespace) -> None:
             print(dim(f"No expenses in {args.month}."))
             return
 
+    sort_key = args.sort or "date"
+    reverse = sort_key == "amount"
+    expenses = sorted(expenses, key=lambda e: e[sort_key], reverse=reverse)
+
+    if args.limit:
+        expenses = expenses[: args.limit]
+
     _print_table(expenses)
 
 
@@ -316,9 +323,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_edit.add_argument("--description", "-d", help="new description")
 
     # list
-    p_list = sub.add_parser("list", help="show expenses (optionally filtered)")
+    p_list = sub.add_parser("list", help="show expenses (optionally filtered and sorted)")
     p_list.add_argument("category", nargs="?", help="filter by category")
     p_list.add_argument("--month", "-m", metavar="YYYY-MM", help="filter by month")
+    p_list.add_argument(
+        "--sort", "-s",
+        choices=["date", "amount", "category"],
+        help="sort by field (default: date; amount sorts highest first)",
+    )
+    p_list.add_argument("--limit", "-n", type=int, metavar="N", help="show only the first N rows")
 
     # search
     p_search = sub.add_parser("search", help="search expenses by keyword")
